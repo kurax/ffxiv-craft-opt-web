@@ -216,15 +216,12 @@ function probExcellentForSynth(synth) {
     }
 }
 
-function calcNameOfMultiplier(s) {
-    /* From http://redd.it/3ejmp2 and http://redd.it/3d3meb
-     Assume for now that the function is linear, but capped with a minimum of 110%
-     */
-    var percentComplete = Math.floor(s.progressState / s.synth.recipe.difficulty * 100) / 100;
-    var nameOfMultiplier = -2 * percentComplete + 3;
-    nameOfMultiplier = Math.max(nameOfMultiplier, 1.0);
-
-    return nameOfMultiplier;
+function calcNameOfElementsBonus(s) {
+    // Progress is determined by calculating the percentage and rounding down to the nearest percent.
+    var percentComplete = Math.floor(s.progressState / s.synth.recipe.difficulty * 100);
+    // Bonus ranges from 0 to 200% based on the inverse of the progress.
+    var bonus = 2 * (100 - percentComplete) / 100;
+    return Math.min(2, Math.max(0, bonus));
 }
 
 function getEffectiveCrafterLevel(synth) {
@@ -260,29 +257,6 @@ function ApplyModifiers(s, action, condition) {
     var recipeLevel = effRecipeLevel;
     var stars = s.synth.recipe.stars;
 
-    if (AllActions.ingenuity.shortName in s.effects.countDowns) {
-        if (levelDifference < 0 && recipeLevel >= 390) {
-            const cap = Math.abs(originalLevelDifference) <= 100 ? -5 : -20;
-            levelDifference = Math.max(levelDifference + Math.floor(recipeLevel / 8), cap);
-        } else {
-            // Shadowbringers
-            if (recipeLevel >= 390) {
-                levelDifference += Math.floor(recipeLevel / 21.5);
-            } else {
-                if (recipeLevel === 290) {
-                    levelDifference += 10;
-                } else if (recipeLevel === 300) {
-                    levelDifference += 9;
-                } else if (recipeLevel >= 120) {
-                    levelDifference += 11;
-                } else {
-                    levelDifference += 5;
-                }
-                levelDifference = Math.max(levelDifference, -1 * (stars || 5));
-            }
-        }
-    }
-
     // Effects modfiying probability
     var successProbability = action.successProbability;
     if (isActionEq(action, AllActions.focusedSynthesis) || isActionEq(action, AllActions.focusedTouch)) {
@@ -300,13 +274,9 @@ function ApplyModifiers(s, action, condition) {
         delete s.effects.countDowns[AllActions.muscleMemory.shortName];
     }
 
-    // Brand actions
-    if (isActionEq(action, AllActions.brandOfTheElements)) {
-        var nameOfMultiplier = 1;
-        if (s.effects.countDowns.hasOwnProperty(AllActions.nameOfTheElements.shortName)) {
-            nameOfMultiplier = Math.min(calcNameOfMultiplier(s), 2);
-        }
-        progressIncreaseMultiplier += nameOfMultiplier;
+    // Name of the Elements increases Brand of the Element's efficiency by 0-200% based on the inverse of progress.
+    if (isActionEq(action, AllActions.brandOfTheElements) && s.effects.countDowns.hasOwnProperty(AllActions.nameOfTheElements.shortName)) {
+        progressIncreaseMultiplier += calcNameOfElementsBonus(s);
     }
 
     if (AllActions.innovation.shortName in s.effects.countDowns) {
@@ -324,21 +294,21 @@ function ApplyModifiers(s, action, condition) {
     // Effects modifying quality increase multiplier
     var qualityIncreaseMultiplier = 1;
 
-    // We can only use Byregot actions when we have at least 2 stacks of inner quiet
-    if (isActionEq(action, AllActions.byregotsBlessing)) {
-        if ((AllActions.innerQuiet.shortName in s.effects.countUps) && s.effects.countUps[AllActions.innerQuiet.shortName] >= 1) {
-            qualityIncreaseMultiplier += 0.2 * s.effects.countUps[AllActions.innerQuiet.shortName];
-        } else {
-            qualityIncreaseMultiplier = 0;
-        }
-    }
-
     if ((AllActions.greatStrides.shortName in s.effects.countDowns) && (qualityIncreaseMultiplier > 0)) {
         qualityIncreaseMultiplier += 1;
     }
 
     if (AllActions.innovation.shortName in s.effects.countDowns) {
         qualityIncreaseMultiplier += 0.2;
+    }
+
+    // We can only use Byregot actions when we have at least 2 stacks of inner quiet
+    if (isActionEq(action, AllActions.byregotsBlessing)) {
+        if ((AllActions.innerQuiet.shortName in s.effects.countUps) && s.effects.countUps[AllActions.innerQuiet.shortName] >= 1) {
+            qualityIncreaseMultiplier *= 1 + (0.2 * s.effects.countUps[AllActions.innerQuiet.shortName]);
+        } else {
+            qualityIncreaseMultiplier = 0;
+        }
     }
 
     // Calculate base and modified progress gain
@@ -467,9 +437,6 @@ function ApplySpecialActionEffects(s, action, condition) {
     }
 
     if (isActionEq(action, AllActions.innovation.shortName) && (AllActions.innovation.shortName in s.effects.countDowns)) {
-        s.wastedActions += 1
-    }
-    if (isActionEq(action, AllActions.ingenuity.shortName) && (AllActions.ingenuity.shortName in s.effects.countDowns)) {
         s.wastedActions += 1
     }
 }
@@ -1367,23 +1334,17 @@ function heuristicSequenceBuilder(synth) {
     };
 
     /* Progress to completion
-        -- Use ingenuity if available and if recipe is higher level
         -- Determine base progress
         -- Determine best action to use from available list
         -- Steady hand if CS is not available
         -- Master's mend if more steps are needed
     */
 
-    // If crafter level < recipe level and ingenuity 1/2 is available, use it.
     var effCrafterLevel = synth.crafter.level;
     if (LevelTable[synth.crafter.level]) {
         effCrafterLevel = LevelTable[synth.crafter.level];
     }
     var effRecipeLevel = synth.recipe.level;
-
-    if ((effCrafterLevel < effRecipeLevel) && tryAction('ingenuity')) {
-        pushAction(subSeq1, 'ingenuity');
-    }
 
     // If Careful Synthesis 1 is available, use it
     var preferredAction = 'basicSynth';
